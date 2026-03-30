@@ -1,4 +1,4 @@
-FROM debian:11 AS builder
+FROM debian:12 AS builder
 
 WORKDIR /app
 
@@ -17,12 +17,13 @@ RUN go mod download
 RUN make build
 
 # 実行ステージ
-FROM gcr.io/distroless/base-debian11 AS prod
+FROM gcr.io/distroless/base-debian12 AS prod
 
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/
 COPY --from=builder /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/
 COPY --from=builder /lib/x86_64-linux-gnu/libc.so.6 /lib/
 COPY --from=builder /lib/x86_64-linux-gnu/libm.so.6 /lib/
+
 COPY --from=builder /app/aquestalk-server /usr/local/bin/main
 
 CMD ["main"]
