@@ -15,7 +15,7 @@ COPY . .
 RUN make build
 
 # 実行ステージ - 軽量なDebianベースのイメージ
-FROM gcr.io/distroless/base-debian10
+FROM gcr.io/distroless/base-debian10 AS prod
 
 # ビルドされたバイナリをコピー
 COPY --from=builder /app/aquestalk-server /usr/local/bin/main
