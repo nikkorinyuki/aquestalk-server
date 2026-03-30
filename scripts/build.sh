@@ -1,3 +1,3 @@
 #!/bin/bash
 
-GOOS=windows GOARCH=386 go build -o aquestalk-server.exe cmd/aquestalk-server/main.go
+GOOS=linux GOARCH=amd64 go build -o aquestalk-server cmd/aquestalk-server/main.go

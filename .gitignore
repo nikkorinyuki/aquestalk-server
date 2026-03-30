@@ -4,8 +4,7 @@
 # Binaries for programs and plugins
 *.exe
 *.exe~
-*.dll
-*.so
+*.so*
 *.dylib
 
 # Test binary, built with `go test -c`
@@ -23,3 +22,5 @@ go.work.sum
 
 # env file
 .env
+
+aquestalk-server

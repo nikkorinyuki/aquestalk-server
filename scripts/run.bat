@@ -1,5 +1,5 @@
 @echo off
 
-set GOOS=windows
-set GOARCH=386
+set GOOS=linux
+set GOARCH=amd64
 go run cmd/aquestalk-server/main.go

@@ -1,164 +1,161 @@
 package aqkanji2koe
 
+/*
+#cgo LDFLAGS: -ldl
+#include <stdlib.h>
+#include <dlfcn.h>
+
+// 関数ポインタの型定義
+typedef void* (*type_AqKanji2Koe_Create)(const char*, int*);
+typedef void (*type_AqKanji2Koe_Release)(void*);
+typedef int (*type_AqKanji2Koe_SetDevKey)(const char*);
+typedef int (*type_AqKanji2Koe_Convert)(void*, const char*, char*, int);
+typedef int (*type_AqKanji2Koe_ConvRoman)(void*, const char*, char*, int);
+
+// ヘルパー関数: 関数ポインタ経由で呼び出すためのラッパー
+void* call_Create(void* f, const char* path, int* err) {
+    return ((type_AqKanji2Koe_Create)f)(path, err);
+}
+void call_Release(void* f, void* handle) {
+    ((type_AqKanji2Koe_Release)f)(handle);
+}
+int call_SetDevKey(void* f, const char* key) {
+    return ((type_AqKanji2Koe_SetDevKey)f)(key);
+}
+int call_Convert(void* f, void* handle, const char* text, char* buf, int size) {
+    return ((type_AqKanji2Koe_Convert)f)(handle, text, buf, size);
+}
+*/
+import "C"
+
 import (
-	"embed"
 	"fmt"
-	"os"
-	"path/filepath"
-	"syscall"
 	"unsafe"
 )
 
-// DLLを埋め込むための設定
-//
-//go:embed bin/*
-var dllFS embed.FS
-
-// エラーコード
 const (
-	ErrNone           = 0 // 成功
-	ErrArgument       = 1 // 引数エラー（NULLポインタ等）
-	ErrNotInitialized = 2 // 未初期化（aqk2k_create を呼んでいない）
-	ErrBufferTooSmall = 3 // バッファ不足
-	ErrProcessing     = 4 // 処理エラー
+	ErrNone           = 0   // 成功
+	ErrArgument       = 101 // 関数呼び出し時の引数が NULL になっている。
+	ErrNotInitialized = 104 // 初期化されていない(初期化ルーチンが呼ばれていない)
+	ErrTextTooLong    = 105 // 入力テキストが長すぎる
+	ErrDicUnload      = 106 // システム辞書データが指定されていない
+	ErrInvalidText    = 107 // 変換できない文字コードが含まれている
+	ErrProcessing     = 100 // その他のエラー
 )
 
 // 最小バッファサイズ
 const minBufSize = 256
 
 type AqKanji2Koe struct {
-	dll              *syscall.DLL
-	createProc       *syscall.Proc
-	releaseProc      *syscall.Proc
-	convertProc      *syscall.Proc
-	convertRomanProc *syscall.Proc
-	tempDir          string
+	libHandle  unsafe.Pointer
+	handle     unsafe.Pointer
+	fCreate    unsafe.Pointer
+	fRelease   unsafe.Pointer
+	fSetDevKey unsafe.Pointer
+	fConvert   unsafe.Pointer
+	fConvRoman unsafe.Pointer
 }
 
-func New() (*AqKanji2Koe, error) {
-	dllData, err := dllFS.ReadFile("bin/AqKanji2Koe.dll")
-	if err != nil {
-		return nil, fmt.Errorf("DLL not found: %w", err)
+// New はライブラリを動的にロードして初期化します
+func New(libPath string, dicPath string) (*AqKanji2Koe, error) {
+	cLibPath := C.CString(libPath)
+	defer C.free(unsafe.Pointer(cLibPath))
+
+	// 1. ライブラリをオープン
+	lib := C.dlopen(cLibPath, C.RTLD_LAZY)
+	if lib == nil {
+		return nil, fmt.Errorf("dlopen failed: %s", C.GoString(C.dlerror()))
 	}
 
-	// 一時ディレクトリの作成
-	tempDir, err := os.MkdirTemp("", "aqkanji2koe-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	a := &AqKanji2Koe{libHandle: lib}
+
+	// 2. シンボルの取得
+	symbols := []struct {
+		name string
+		ptr  *unsafe.Pointer
+	}{
+		{"AqKanji2Koe_Create", &a.fCreate},
+		{"AqKanji2Koe_Release", &a.fRelease},
+		{"AqKanji2Koe_SetDevKey", &a.fSetDevKey},
+		{"AqKanji2Koe_Convert", &a.fConvert},
+		{"AqKanji2Koe_ConvRoman", &a.fConvRoman},
 	}
 
-	// 一時ファイルにDLLを書き出し
-	tempDLLPath := filepath.Join(tempDir, "AqKanji2Koe.dll")
-	if err := os.WriteFile(tempDLLPath, dllData, 0644); err != nil {
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("failed to write DLL: %w", err)
+	for _, s := range symbols {
+		cName := C.CString(s.name)
+		*s.ptr = C.dlsym(lib, cName)
+		C.free(unsafe.Pointer(cName))
+		if *s.ptr == nil {
+			C.dlclose(lib)
+			return nil, fmt.Errorf("symbol not found: %s", s.name)
+		}
 	}
 
-	// DLLの読み込み
-	dll, err := syscall.LoadDLL(tempDLLPath)
-	if err != nil {
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("DLL load error: %w", err)
+	// 3. インスタンス生成
+	cDicPath := C.CString(dicPath)
+	defer C.free(unsafe.Pointer(cDicPath))
+	var cErr C.int
+
+	a.handle = C.call_Create(a.fCreate, cDicPath, &cErr)
+	if a.handle == nil {
+		C.dlclose(lib)
+		return nil, fmt.Errorf("aqk2k_create failed (code: %d)", cErr)
 	}
 
-	// プロシージャの取得
-	createProc, err := dll.FindProc("aqk2k_create")
-	if err != nil {
-		dll.Release()
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("aqk2k_create not found: %w", err)
-	}
-
-	releaseProc, err := dll.FindProc("aqk2k_release")
-	if err != nil {
-		dll.Release()
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("aqk2k_release not found: %w", err)
-	}
-
-	convertProc, err := dll.FindProc("aqk2k_convert")
-	if err != nil {
-		dll.Release()
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("aqk2k_convert not found: %w", err)
-	}
-
-	convertRomanProc, err := dll.FindProc("aqk2k_convert_roman")
-	if err != nil {
-		dll.Release()
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("aqk2k_convert_roman not found: %w", err)
-	}
-
-	aq := &AqKanji2Koe{
-		dll:              dll,
-		createProc:       createProc,
-		releaseProc:      releaseProc,
-		convertProc:      convertProc,
-		convertRomanProc: convertRomanProc,
-		tempDir:          tempDir,
-	}
-
-	// 初期化
-	ret, _, _ := aq.createProc.Call()
-	if ret != ErrNone {
-		dll.Release()
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("aqk2k_create failed (code: %d)", ret)
-	}
-
-	return aq, nil
+	return a, nil
 }
 
 func (a *AqKanji2Koe) Close() error {
-	if a.dll != nil {
-		a.releaseProc.Call()
-		a.dll.Release()
-		a.dll = nil
+	if a.handle != nil {
+		C.call_Release(a.fRelease, a.handle)
+		a.handle = nil
 	}
-	if a.tempDir != "" {
-		os.RemoveAll(a.tempDir)
-		a.tempDir = ""
+	if a.libHandle != nil {
+		C.dlclose(a.libHandle)
+		a.libHandle = nil
 	}
 	return nil
 }
 
-// Convert は漢字かな混じりテキストをかな音声記号列に変換する（UTF-8）
-func (a *AqKanji2Koe) Convert(text string) (string, error) {
-	return a.callConvert(a.convertProc, text)
-}
-
-// ConvertRoman は漢字かな混じりテキストをローマ字音声記号列に変換する（UTF-8）
-func (a *AqKanji2Koe) ConvertRoman(text string) (string, error) {
-	return a.callConvert(a.convertRomanProc, text)
-}
-
-// callConvert は convert / convert_roman の共通処理
-func (a *AqKanji2Koe) callConvert(proc *syscall.Proc, text string) (string, error) {
-	cInput, err := syscall.BytePtrFromString(text)
-	if err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+func (a *AqKanji2Koe) SetDevKey(devKey string) error {
+	pDevKey := C.CString(devKey)
+	defer C.free(unsafe.Pointer(pDevKey))
+	ret := C.call_SetDevKey(a.fSetDevKey, pDevKey)
+	if ret == 0 {
+		return fmt.Errorf("invalid devKey")
 	}
+	return nil
+}
 
-	// 入力テキストの2倍以上、最低256バイト
-	bufSize := max(len(text)*2, minBufSize)
+func (a *AqKanji2Koe) Convert(text string) (string, error) {
+	return a.callConvert(text, false)
+}
 
+func (a *AqKanji2Koe) ConvertRoman(text string) (string, error) {
+	return a.callConvert(text, true)
+}
+
+func (a *AqKanji2Koe) callConvert(text string, roman bool) (string, error) {
+	pText := C.CString(text)
+	defer C.free(unsafe.Pointer(pText))
+
+	bufSize := len(text) * 2
+	if bufSize < minBufSize {
+		bufSize = minBufSize
+	}
 	buf := make([]byte, bufSize)
 
-	ret, _, _ := proc.Call(
-		uintptr(unsafe.Pointer(cInput)),
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(len(buf)),
-	)
+	var ret C.int
+	fTarget := a.fConvert
+	if roman {
+		fTarget = a.fConvRoman
+	}
+
+	ret = C.call_Convert(fTarget, a.handle, pText, (*C.char)(unsafe.Pointer(&buf[0])), C.int(bufSize))
 
 	if ret != ErrNone {
 		return "", fmt.Errorf("convert failed (code: %d)", ret)
 	}
 
-	// NULL終端までの文字列を取得
-	n := 0
-	for n < len(buf) && buf[n] != 0 {
-		n++
-	}
-	return string(buf[:n]), nil
+	return C.GoString((*C.char)(unsafe.Pointer(&buf[0]))), nil
 }

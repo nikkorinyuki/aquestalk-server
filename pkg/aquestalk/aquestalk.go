@@ -1,120 +1,80 @@
 package aquestalk
 
-import (
-	"embed"
-	"fmt"
-	"os"
-	"path/filepath"
-	"syscall"
-	"unsafe"
+/*
+#cgo LDFLAGS: -ldl
+#include <dlfcn.h>
+#include <stdlib.h>
 
-	"golang.org/x/text/encoding/japanese"
+// 関数ポインタの型定義
+typedef unsigned char* (*SyntheFunc)(const char*, int, int*);
+typedef void (*FreeWaveFunc)(unsigned char*);
+
+// C側で動的に関数を呼び出すためのヘルパー
+unsigned char* bridge_synthe(void* f, const char* koe, int speed, int* size) {
+    return ((SyntheFunc)f)(koe, speed, size);
+}
+void bridge_free(void* f, unsigned char* wav) {
+    ((FreeWaveFunc)f)(wav);
+}
+*/
+import "C"
+
+import (
+	"fmt"
+	"unsafe"
 )
 
-// DLLを埋め込むための設定（プロジェクトのディレクトリ構造に合わせて調整）
-//
-//go:embed bin/*
-var dllFS embed.FS
-
 type AquesTalk struct {
-	dll          *syscall.DLL
-	syntheProc   *syscall.Proc
-	freeWaveProc *syscall.Proc
-	tempDir      string // 一時ディレクトリの保持用
+	handle   unsafe.Pointer
+	fnSynthe unsafe.Pointer
+	fnFree   unsafe.Pointer
 }
 
-func New(voice string) (*AquesTalk, error) {
-	// 埋め込みDLLのパスを構築
-	dllPathInEmbed := fmt.Sprintf("bin/%s/AquesTalk.dll", voice)
-	dllData, err := dllFS.ReadFile(dllPathInEmbed)
-	if err != nil {
-		return nil, fmt.Errorf("DLL not found for voice %s: %w", voice, err)
-	}
+func New(libBasePath string, voice string) (*AquesTalk, error) {
+	// 埋め込みSOのパスを構築
+	libPath := fmt.Sprintf(libBasePath, voice)
+	cPath := C.CString(libPath)
+	defer C.free(unsafe.Pointer(cPath))
 
-	// 一時ディレクトリの作成
-	tempDir, err := os.MkdirTemp("", "aquestalk-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-
-	// 一時ファイルにDLLを書き出し
-	tempDLLPath := filepath.Join(tempDir, "AquesTalk.dll")
-	if err := os.WriteFile(tempDLLPath, dllData, 0644); err != nil {
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("failed to write DLL: %w", err)
-	}
-
-	// DLLの読み込み
-	dll, err := syscall.LoadDLL(tempDLLPath)
-	if err != nil {
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("DLL load error: %w", err)
-	}
-
-	// プロシージャの取得
-	syntheProc, err := dll.FindProc("AquesTalk_Synthe")
-	if err != nil {
-		dll.Release()
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("AquesTalk_Synthe not found: %w", err)
-	}
-
-	freeWaveProc, err := dll.FindProc("AquesTalk_FreeWave")
-	if err != nil {
-		dll.Release()
-		os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("AquesTalk_FreeWave not found: %w", err)
+	handle := C.dlopen(cPath, C.RTLD_NOW)
+	if handle == nil {
+		return nil, fmt.Errorf("%s voice load error: %s", voice, C.GoString(C.dlerror()))
 	}
 
 	return &AquesTalk{
-		dll:          dll,
-		syntheProc:   syntheProc,
-		freeWaveProc: freeWaveProc,
-		tempDir:      tempDir,
+		handle:   handle,
+		fnSynthe: C.dlsym(handle, C.CString("AquesTalk_Synthe_Utf8")),
+		fnFree:   C.dlsym(handle, C.CString("AquesTalk_FreeWave")),
 	}, nil
 }
 
 func (a *AquesTalk) Close() error {
-	if a.dll != nil {
-		a.dll.Release()
-		a.dll = nil
-	}
-	if a.tempDir != "" {
-		os.RemoveAll(a.tempDir) // 一時ディレクトリを削除
-		a.tempDir = ""
+	if a.handle != nil {
+		C.dlclose(a.handle)
+		a.handle = nil
 	}
 	return nil
 }
 
 // 音声合成を実行
 func (a *AquesTalk) Synthe(koe string, speed int) ([]byte, error) {
-	enc := japanese.ShiftJIS.NewEncoder()
-	koe, err := enc.String(koe)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert koe to sjis: %w", err)
-	}
+	pKoe := C.CString(koe)
+	defer C.free(unsafe.Pointer(pKoe))
 
-	ckoe, err := syscall.BytePtrFromString(koe)
-	if err != nil {
-		return nil, fmt.Errorf("invalid parameter: %w", err)
-	}
-
-	var size int
-	ret, _, _ := a.syntheProc.Call(
-		uintptr(unsafe.Pointer(ckoe)),
-		uintptr(speed),
-		uintptr(unsafe.Pointer(&size)),
+	var size C.int
+	ptr := C.bridge_synthe(
+		a.fnSynthe,
+		pKoe,
+		C.int(speed),
+		&size,
 	)
 
-	if ret == 0 {
+	if ptr == nil {
 		return nil, fmt.Errorf("synthesis failed (code: %d)", size)
 	}
 
 	// WAVデータのコピーと解放
-	wavData := unsafe.Slice((*byte)(unsafe.Pointer(ret)), size)
-	data := make([]byte, len(wavData))
-	copy(data, wavData)
-	a.freeWaveProc.Call(ret)
+	defer C.bridge_free(a.fnFree, ptr)
 
-	return data, nil
+	return C.GoBytes(unsafe.Pointer(ptr), size), nil
 }

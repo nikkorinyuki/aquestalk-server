@@ -1,5 +1,5 @@
 @echo off
 
-set GOOS=windows
-set GOARCH=386
-go build -o aquestalk-server.exe cmd/aquestalk-server/main.go
+set GOOS=linux
+set GOARCH=amd64
+go build -o aquestalk-server cmd/aquestalk-server/main.go

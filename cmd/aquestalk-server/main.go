@@ -36,18 +36,22 @@ type SpeechRequest struct {
 
 func main() {
 	// AqKanji2Koeの初期化（起動時に1回だけ）
-	ak, err := aqkanji2koe.New()
+	ak, err := aqkanji2koe.New(os.Getenv("AqKanji2Koe_LibPath"), os.Getenv("AqKanji2Koe_DicPath"))
 	if err != nil {
 		log.Fatalf("AqKanji2Koe init failed: %v", err)
 	}
 	defer ak.Close()
 	var akMu sync.Mutex
+	// AqKanji2KoeのdevKeyを設定する
+	if err := ak.SetDevKey(os.Getenv("AqKanji2Koe_DevKey")); err != nil {
+		log.Fatalf("AqKanji2Koe devKey failed: %v", err)
+	}
 
 	// AquesTalkの全voice初期化（起動時に1回だけ）
 	aqMap := make(map[string]*aquestalk.AquesTalk)
 	aqMu := make(map[string]*sync.Mutex)
 	for voice := range allowedVoices {
-		aq, err := aquestalk.New(voice)
+		aq, err := aquestalk.New(os.Getenv("AquesTalk_LibPath"), voice)
 		if err != nil {
 			log.Fatalf("AquesTalk init failed for voice %s: %v", voice, err)
 		}
