@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY go.* ./
 
-RUN apt-get update && apt-get upgrade -y && apt-get install -y curl gcc
+RUN apt-get update && apt-get upgrade -y && apt-get install -y make curl gcc
 RUN ARCH=$(dpkg --print-architecture) && \
 if [ "$ARCH" = "arm64" ]; then GOARCH="arm64"; else GOARCH="amd64"; fi && \
 curl -OL https://go.dev/dl/go1.24.0.linux-${GOARCH}.tar.gz && \
