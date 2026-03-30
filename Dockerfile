@@ -1,24 +1,24 @@
-# ビルドステージ - Golang環境を使用してビルド
-FROM golang:1.24 AS builder
+FROM debian:11 AS builder
 
-# 作業ディレクトリの設定
 WORKDIR /app
 
-# キャッシュを効率的に使うためにgo.modとgo.sumを先にコピー
 COPY go.* ./
+
+RUN apt-get update && apt-get upgrade -y && apt-get install -y curl gcc
+RUN ARCH=$(dpkg --print-architecture) && \
+if [ "$ARCH" = "arm64" ]; then GOARCH="arm64"; else GOARCH="amd64"; fi && \
+curl -OL https://go.dev/dl/go1.24.0.linux-${GOARCH}.tar.gz && \
+tar -C /usr/local -xzf go1.24.0.linux-${GOARCH}.tar.gz && \
+rm -rf go1.24.0.linux-${GOARCH}.tar.gz
+ENV PATH $PATH:/usr/local/go/bin
+ADD ./ .
+
 RUN go mod download
-
-# ソースコードをコピー
-COPY . .
-
-# Makefileを使ってビルド
 RUN make build
 
-# 実行ステージ - 軽量なDebianベースのイメージ
-FROM gcr.io/distroless/base-debian10 AS prod
+# 実行ステージ
+FROM gcr.io/distroless/base-debian11 AS prod
 
-# ビルドされたバイナリをコピー
 COPY --from=builder /app/aquestalk-server /usr/local/bin/main
 
-# アプリケーションを実行
 CMD ["main"]
