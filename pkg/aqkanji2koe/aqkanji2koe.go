@@ -121,7 +121,7 @@ func (a *AqKanji2Koe) SetDevKey(devKey string) error {
 	pDevKey := C.CString(devKey)
 	defer C.free(unsafe.Pointer(pDevKey))
 	ret := C.call_SetDevKey(a.fSetDevKey, pDevKey)
-	if ret == 0 {
+	if ret == 1 {
 		return fmt.Errorf("invalid devKey")
 	}
 	return nil
