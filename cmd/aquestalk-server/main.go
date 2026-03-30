@@ -32,6 +32,11 @@ type SpeechRequest struct {
 	ResponseFormat string  `json:"response_format,omitempty"`
 	Speed          float64 `json:"speed,omitempty"`
 	StreamFormat   string  `json:"stream_format,omitempty"`
+	IsKana         *bool   `json:"isKana"`
+}
+
+type PronunciationRequest struct {
+	Input string `json:"input" binding:"required"`
 }
 
 func main() {
@@ -121,14 +126,17 @@ func main() {
 		}
 
 		// 入力テキストをかな音声記号列に変換
-		akMu.Lock()
-		koe, err := ak.Convert(req.Input)
-		akMu.Unlock()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("convert failed: %v", err),
-			})
-			return
+		koe := req.Input
+		if req.IsKana != nil && *req.IsKana == true {
+			akMu.Lock()
+			koe, err = ak.Convert(req.Input)
+			akMu.Unlock()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": fmt.Sprintf("convert failed: %v", err),
+				})
+				return
+			}
 		}
 
 		// 速度を100倍して整数に変換（1.0 → 100, 2.0 → 200）
@@ -152,6 +160,36 @@ func main() {
 
 		// 音声データを返却
 		c.Data(http.StatusOK, "audio/wav", wav)
+	})
+
+	r.POST("/pronunciation", func(c *gin.Context) {
+		var req PronunciationRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Inputのチェック
+		if len(req.Input) == 0 || len(req.Input) > 4096 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "input must be between 1 and 4096 characters",
+			})
+			return
+		}
+
+		// 入力テキストをかな音声記号列に変換
+		akMu.Lock()
+		koe, err := ak.Convert(req.Input)
+		akMu.Unlock()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("convert failed: %v", err),
+			})
+			return
+		}
+
+		// 音声データを返却
+		c.String(http.StatusOK, koe)
 	})
 
 	port := os.Getenv("PORT")

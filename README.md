@@ -23,7 +23,7 @@
 - `AqKanji2Koe_LibPath`: `./aquestalk/aqk2k_lnx/lib/libAqKanji2Koe.so.4.1`
 - `AqKanji2Koe_DicPath`: `./aquestalk/aqk2k_lnx/aq_dic`
 - `AqKanji2Koe_DevKey`: `(開発ライセンスキーを入力)`
-- `AquesTalk_LibPath`: `"./aquestalk/aqtk1-lnx/lib64/%s/libAquesTalk.so"`
+- `AquesTalk_LibPath`: `./aquestalk/aqtk1-lnx/lib64/%s/libAquesTalk.so`
 
 ## APIエンドポイント
 
@@ -51,8 +51,28 @@ curl http://localhost:8080/v1/audio/speech \
 - `model` (string): 固定値 `tts-1`。`tts-1-hd` は使用できません。
 - `voice` (string): 使用する音声の種類。`dvd`, `f1`, `f2`, `imd1`, `jgr`, `m1`, `m2`, `r1` のいずれか。
 - `input` (string): 合成するテキスト。
+- `isKana` (bool?): inputで指定されたテキストがカナ音声記号列かを指定します。
 - `response_format` (string): 固定値 `wav`。それ以外はエラーとなります。
 - `speed` (float): 音声の速度。0.5から3.0の間の値で指定します。
+
+- **POST** `/pronunciation`
+  
+  音声合成を行うエンドポイントです。
+
+### リクエスト例 (curl)
+
+```bash
+curl http://localhost:8080/pronunciation \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "今日はいい天気ですね。"
+  }' \
+  --output output.txt
+```
+
+### パラメータ
+
+- `input` (string): 変換するテキスト。
 
 ## 内部テキスト変換処理
 
